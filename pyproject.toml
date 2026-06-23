@@ -5,12 +5,15 @@ build-backend = "setuptools.backends._legacy:_Backend"
 [project]
 name = "clawhermes-lark"
 version = "0.1.0"
-description = "ClawHermes 飞书/Lark 渠道适配器 — 基于 lark-oapi 官方 SDK"
+description = "ClawHermes 飞书/Lark 渠道适配器 — 基于 lark-oapi，对齐 larksuite/openclaw-lark"
 requires-python = ">=3.12"
 dependencies = [
     "lark-oapi>=1.6",
     "clawhermes",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "ruff"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

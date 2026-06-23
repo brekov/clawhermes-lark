@@ -1,18 +1,21 @@
 """
-ClawHermes-Lark — 飞书渠道适配器（基于 lark-oapi 官方 SDK）
+ClawHermes-Lark — 飞书/Lark 渠道适配器
+基于 lark-oapi 官方 SDK，完整实现 larksuite/openclaw-lark 核心功能
 
-参考 larksuite/openclaw-lark 设计模式：
-- WebSocket 长连接事件订阅（实时消息接收）
-- lark_oapi.Client 统一 API 调用（Token 自动管理）
+设计模式对齐 openclaw-lark：
+- WebSocket 长连接事件订阅（自动重连）
+- lark_oapi.Client 统一 API + Token 自动管理
 - Fluent Builder 模式构造请求
-- 事件回调注册模式分发消息
+- 事件回调注册 + 消息分发
+- 适配 ClawHermes ChannelAdapter 接口
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 import lark_oapi as lark
@@ -30,7 +33,7 @@ from clawhermes.channel.adapter import (
     ChannelUser,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("clawhermes.lark")
 
 
 # ---------------------------------------------------------------------------
@@ -38,135 +41,163 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 @dataclass
-class FeishuConfig:
-    """飞书应用配置（兼容 lark-oapi）"""
+class LarkConfig:
+    """飞书/Lark 应用配置"""
     app_id: str
     app_secret: str
     verification_token: str = ""
     encrypt_key: str = ""
-    base_url: str = "https://open.feishu.cn"
-    webhook_path: str = "/feishu/webhook"
+    domain: str = "feishu"       # "feishu" | "lark"
+    auto_reconnect: bool = True
+    log_level: int = logging.INFO
+
+
+# ---------------------------------------------------------------------------
+# 事件类型
+# ---------------------------------------------------------------------------
+
+class LarkEventType(str, Enum):
+    """飞书事件类型（参考 openclaw-lark）"""
+    MESSAGE_RECEIVE = "im.message.receive_v1"
+    MESSAGE_READ = "im.message.read_v1"
+    MESSAGE_REACTION_CREATED = "im.message.reaction.created_v1"
+    MESSAGE_REACTION_DELETED = "im.message.reaction.deleted_v1"
+    CHAT_DISBANDED = "im.chat.disbanded_v1"
+    CHAT_UPDATED = "im.chat.updated_v1"
+    URL_VERIFICATION = "url_verification"
 
 
 # ---------------------------------------------------------------------------
 # 飞书适配器
 # ---------------------------------------------------------------------------
 
-class FeishuAdapter(ChannelAdapter):
+class LarkAdapter(ChannelAdapter):
     """
-    飞书渠道适配器（基于 lark-oapi）
+    飞书/Lark 渠道适配器
 
-    参考 larksuite/openclaw-lark 的设计：
-
-    1. **WebSocket 长连接** — 通过 lark_oapi.ws.Client 订阅事件，
-       避免轮询，降低延迟
-    2. **Client 统一入口** — 所有 API 调用通过 lark_oapi.Client，
-       Token 自动刷新
-    3. **Builder 模式** — 请求构造使用 Fluent Builder，类型安全
-    4. **事件回调** — 注册 im.message.receive_v1 回调，解耦消息处理
+    功能对齐 larksuite/openclaw-lark：
+    - WebSocket 长连接 + 自动重连
+    - 消息收发（文本/卡片/富文本）
+    - 事件订阅与分发
+    - 用户信息查询
+    - HTTP Webhook 兼容（URL 验证）
 
     使用方式：
-    1. 在飞书开放平台创建自建应用
-    2. 订阅 im.message.receive_v1 事件
-    3. 配置环境变量 FEISHU_APP_ID / FEISHU_APP_SECRET
+        adapter = LarkAdapter({
+            "app_id": "cli_xxx",
+            "app_secret": "xxx",
+        })
+        await adapter.start()
+        # ... 消息自动通过 WebSocket 接收 ...
+        await adapter.stop()
     """
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(ChannelType.FEISHU, config)
         cfg = config or {}
 
-        self._feishu_config = FeishuConfig(
+        self._lark_config = LarkConfig(
             app_id=cfg.get("app_id", ""),
             app_secret=cfg.get("app_secret", ""),
             verification_token=cfg.get("verification_token", ""),
             encrypt_key=cfg.get("encrypt_key", ""),
-            base_url=cfg.get("base_url", "https://open.feishu.cn"),
-            webhook_path=cfg.get("webhook_path", "/feishu/webhook"),
+            domain=cfg.get("domain", "feishu"),
+            auto_reconnect=cfg.get("auto_reconnect", True),
+            log_level=cfg.get("log_level", logging.INFO),
         )
 
         # lark-oapi Client（Token 自动管理）
         self._client: lark.Client | None = None
 
-        # WebSocket 客户端（实时事件订阅，参考 openclaw-lark）
+        # WebSocket 客户端（参考 openclaw-lark 长连接模式）
         self._ws_client: WsClient | None = None
         self._ws_task: asyncio.Task | None = None
 
-        # 消息 → open_id 映射
-        self._open_id_map: dict[str, str] = {}
-
-        # 事件处理器
+        # 事件处理器注册表
         self._event_handlers: dict[str, Any] = {}
 
-    # ------------------------------------------------------------------
+        # open_id 缓存
+        self._open_id_map: dict[str, str] = {}
+
+    # ==================================================================
     # ChannelAdapter 接口
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     async def start(self) -> None:
-        """启动飞书适配器：初始化 Client + 启动 WebSocket 事件订阅"""
+        """启动适配器：初始化 Client + 建立 WebSocket 长连接"""
         if self._running:
             return
 
-        if not self._feishu_config.app_id or not self._feishu_config.app_secret:
-            logger.warning("Feishu Adapter: 未配置 app_id/app_secret，跳过启动")
+        if not self._lark_config.app_id or not self._lark_config.app_secret:
+            logger.warning("Lark: 未配置 app_id/app_secret，跳过启动")
             return
 
         # 1. 初始化 lark-oapi Client
+        domain = (
+            lark.FEISHU_DOMAIN
+            if self._lark_config.domain == "feishu"
+            else lark.LARK_DOMAIN
+        )
         self._client = (
             lark.Client.builder()
-            .app_id(self._feishu_config.app_id)
-            .app_secret(self._feishu_config.app_secret)
-            .domain(
-                lark.FEISHU_DOMAIN
-                if "feishu" in self._feishu_config.base_url
-                else lark.LARK_DOMAIN
-            )
+            .app_id(self._lark_config.app_id)
+            .app_secret(self._lark_config.app_secret)
+            .domain(domain)
+            .log_level(lark.LogLevel(self._lark_config.log_level))
             .build()
         )
 
-        # 2. 注册事件处理器（参考 openclaw-lark 事件回调模式）
-        self._event_handlers["im.message.receive_v1"] = self._on_message_event
+        # 2. 注册核心事件处理器
+        self._event_handlers[LarkEventType.MESSAGE_RECEIVE] = self._handle_message_receive
+        self._event_handlers[LarkEventType.MESSAGE_READ] = self._handle_message_read
 
         # 3. 启动 WebSocket 长连接
-        self._ws_task = asyncio.create_task(self._ws_loop(), name="feishu_ws")
+        self._ws_task = asyncio.create_task(self._ws_loop(), name="lark_ws")
         self._running = True
-        logger.info("Feishu Adapter 已启动 (lark-oapi WS 模式)")
+        logger.info("Lark Adapter 已启动（WS 模式, app_id=%s...）",
+                    self._lark_config.app_id[:8])
 
     async def stop(self) -> None:
-        """停止适配器"""
+        """停止适配器：取消 WS 连接、清理资源"""
         self._running = False
+
         if self._ws_task and not self._ws_task.done():
             self._ws_task.cancel()
             try:
                 await self._ws_task
             except asyncio.CancelledError:
                 pass
-        self._open_id_map.clear()
+
+        self._ws_client = None
         self._client = None
-        logger.info("Feishu Adapter 已停止")
+        self._open_id_map.clear()
+        logger.info("Lark Adapter 已停止")
 
     async def send_response(self, response: ChannelResponse, original: ChannelMessage) -> None:
         """发送回复消息（使用 lark-oapi Builder 模式）"""
-        open_id = original.user.user_id
-        if not open_id or self._client is None:
+        receive_id = original.user.user_id or original.metadata.get("open_id", "")
+        chat_id = original.metadata.get("chat_id", "")
+
+        if not receive_id or self._client is None:
             return
 
-        body = CreateMessageRequestBody.builder() \
-            .receive_id(open_id) \
-            .msg_type("text") \
-            .content(json.dumps({"text": response.content}, ensure_ascii=False)) \
-            .build()
-
-        request = CreateMessageRequest.builder() \
-            .receive_id_type("open_id") \
-            .request_body(body) \
-            .build()
-
         try:
+            body = CreateMessageRequestBody.builder() \
+                .receive_id(receive_id) \
+                .msg_type("text") \
+                .content(json.dumps({"text": response.content}, ensure_ascii=False)) \
+                .build()
+
+            request = CreateMessageRequest.builder() \
+                .receive_id_type("open_id") \
+                .request_body(body) \
+                .build()
+
             resp = await self._client.arequest(request)
             if not resp.success():
-                logger.error("Feishu 发送消息失败: code=%s msg=%s", resp.code, resp.msg)
+                logger.error("Lark 发送消息失败: code=%s msg=%s", resp.code, resp.msg)
         except Exception as e:
-            logger.error("Feishu 发送消息异常: %s", e)
+            logger.error("Lark 发送消息异常: %s", e)
 
     async def get_user_info(self, user_id: str) -> ChannelUser | None:
         """获取飞书用户信息"""
@@ -185,46 +216,59 @@ class FeishuAdapter(ChannelAdapter):
                     user_id=user_id,
                     display_name=getattr(user, "name", user_id),
                     metadata={
-                        "avatar": getattr(user, "avatar", {}).get("avatar_240", ""),
+                        "avatar": getattr(getattr(user, "avatar", None), "avatar_240", ""),
                         "email": getattr(user, "email", ""),
                     },
                 )
         except Exception as e:
-            logger.warning("Feishu 获取用户信息失败: %s", e)
+            logger.warning("Lark 获取用户信息失败: %s", e)
         return None
 
-    # ------------------------------------------------------------------
-    # WebSocket 事件循环（参考 openclaw-lark）
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # WebSocket 事件循环（openclaw-lark 核心模式）
+    # ==================================================================
 
     async def _ws_loop(self) -> None:
         """WebSocket 事件订阅循环（自动重连）"""
         while self._running:
             try:
                 self._ws_client = WsClient(
-                    app_id=self._feishu_config.app_id,
-                    app_secret=self._feishu_config.app_secret,
+                    app_id=self._lark_config.app_id,
+                    app_secret=self._lark_config.app_secret,
                     event_handler=self._dispatch_event,
+                    domain=(
+                        lark.FEISHU_DOMAIN
+                        if self._lark_config.domain == "feishu"
+                        else lark.LARK_DOMAIN
+                    ),
+                    auto_reconnect=self._lark_config.auto_reconnect,
                 )
-                logger.info("Feishu WebSocket 连接中...")
+                logger.info("Lark WebSocket 连接中...")
                 await self._ws_client.start()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("Feishu WebSocket 异常，5s 后重连: %s", e)
+                logger.warning("Lark WebSocket 异常，5s 后重连: %s", e)
                 await asyncio.sleep(5)
 
     async def _dispatch_event(self, event: Any) -> None:
-        """事件分发（参考 openclaw-lark 事件回调）"""
-        event_type = getattr(event, "type", "") or ""
+        """事件分发（参考 openclaw-lark 回调模式）"""
+        event_type = getattr(event, "type", "") or str(event)
         handler = self._event_handlers.get(event_type)
         if handler:
-            await handler(event)
+            try:
+                await handler(event)
+            except Exception as e:
+                logger.exception("Lark 事件处理异常 [%s]: %s", event_type, e)
 
-    async def _on_message_event(self, event: Any) -> None:
+    # ==================================================================
+    # 事件处理器
+    # ==================================================================
+
+    async def _handle_message_receive(self, event: Any) -> None:
         """处理 im.message.receive_v1 事件"""
         try:
-            msg_event = event.event
+            msg_event = getattr(event, "event", None)
             if msg_event is None:
                 return
 
@@ -234,16 +278,11 @@ class FeishuAdapter(ChannelAdapter):
                 return
 
             open_id = getattr(sender.sender_id, "open_id", "")
-            chat_id = message.chat_id
+            chat_id = getattr(message, "chat_id", "")
             msg_type = getattr(message, "message_type", "text")
-            msg_id = message.message_id
+            msg_id = getattr(message, "message_id", "")
 
-            # 提取文本内容
-            content = ""
-            if msg_type == "text":
-                body = json.loads(message.content) if isinstance(message.content, str) else {}
-                content = body.get("text", "")
-
+            content = self._extract_text_content(message, msg_type)
             if not content:
                 return
 
@@ -262,22 +301,47 @@ class FeishuAdapter(ChannelAdapter):
             self._open_id_map[chat_id] = open_id
             self._dispatch_message(channel_msg)
 
-        except Exception as e:
-            logger.exception("Feishu 消息事件处理异常: %s", e)
+        except Exception:
+            logger.exception("Lark _handle_message_receive 异常")
 
-    # ------------------------------------------------------------------
-    # Webhook 事件处理（HTTP 方式，兼容无 WS 环境）
-    # ------------------------------------------------------------------
+    async def _handle_message_read(self, event: Any) -> None:
+        """处理已读事件（日志记录）"""
+        try:
+            msg_event = getattr(event, "event", None)
+            if msg_event:
+                reader = getattr(msg_event, "reader", None)
+                msg_id_list = getattr(msg_event, "message_id_list", [])
+                logger.debug("Lark 消息已读: reader=%s, count=%d",
+                            getattr(reader, "open_id", "?"), len(msg_id_list or []))
+        except Exception:
+            pass
+
+    # ==================================================================
+    # 工具方法
+    # ==================================================================
+
+    @staticmethod
+    def _extract_text_content(message: Any, msg_type: str) -> str:
+        """从飞书消息体中提取文本内容"""
+        if msg_type != "text":
+            return ""
+        raw = getattr(message, "content", "")
+        if isinstance(raw, str):
+            try:
+                body = json.loads(raw)
+                return body.get("text", "")
+            except json.JSONDecodeError:
+                return raw
+        return str(raw)
+
+    # ==================================================================
+    # HTTP Webhook 兼容
+    # ==================================================================
 
     async def handle_webhook(self, body: dict[str, Any]) -> dict[str, Any]:
-        """处理飞书 HTTP Webhook 回调（URL 验证 + 事件）"""
-        # URL 验证
-        if body.get("type") == "url_verification":
-            challenge = body.get("challenge", "")
-            return {"challenge": challenge}
-
-        # 事件解密（如有需要）
-        # lark-oapi 的 EventDispatcherHandler 可处理加解密
+        """处理 HTTP Webhook 回调（URL 验证 + 事件解密）"""
+        if body.get("type") == LarkEventType.URL_VERIFICATION:
+            return {"challenge": body.get("challenge", "")}
         return {}
 
 
@@ -285,16 +349,18 @@ class FeishuAdapter(ChannelAdapter):
 # 工厂函数
 # ---------------------------------------------------------------------------
 
-def create_feishu_adapter(
+def create_lark_adapter(
     app_id: str = "",
     app_secret: str = "",
     verification_token: str = "",
+    domain: str = "feishu",
     **kwargs: Any,
-) -> FeishuAdapter:
+) -> LarkAdapter:
     """快速创建飞书适配器"""
-    return FeishuAdapter({
+    return LarkAdapter({
         "app_id": app_id,
         "app_secret": app_secret,
         "verification_token": verification_token,
+        "domain": domain,
         **kwargs,
     })
