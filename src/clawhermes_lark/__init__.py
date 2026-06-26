@@ -9,8 +9,8 @@ from clawhermes_lark.adapter import (
     LarkConfig,
     LarkEventType,
     create_lark_adapter,
-from clawhermes_lark.client import BotIdentity, LarkClient
 )
+from clawhermes_lark.client import BotIdentity, LarkClient
 
 __version__ = "0.1.0"
 __all__ = ["LarkAdapter", "LarkConfig", "LarkEventType", "create_lark_adapter", "BotIdentity", "LarkClient"]
