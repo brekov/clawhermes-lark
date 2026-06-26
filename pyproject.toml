@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clawhermes-lark"
-version = "0.1.0"
+version = "0.3.0"
 description = "ClawHermes 飞书/Lark 渠道适配器 — 基于 lark-oapi，对齐 larksuite/openclaw-lark"
 requires-python = ">=3.12"
 dependencies = [
