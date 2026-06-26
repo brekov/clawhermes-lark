@@ -21,9 +21,9 @@ import json
 import logging
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 import lark_oapi as lark
 from lark_oapi.api.contact.v3 import ListUserRequest
@@ -47,13 +47,6 @@ from clawhermes.channel.adapter import (
 # Hermes vendor — 消息解析/格式化引擎（5512 行生产级代码）
 from clawhermes_lark.hermes_vendor import (
     _build_markdown_post_payload,
-    _build_markdown_post_rows,
-    _build_mentions_map,
-    _escape_markdown_text,
-    _extract_mention_ids,
-    _strip_markdown_to_plain_text,
-    FeishuMentionRef,
-    normalize_feishu_message,
     parse_feishu_post_payload,
 )
 
@@ -94,8 +87,8 @@ class LarkConfig:
 
     # ── 群聊策略 ─────────────────────────────────────────────────
     group_policy: str = "allowlist"
-    allowed_group_users: list[str] = ()
-    admins: list[str] = ()
+    allowed_group_users: list[str] = field(default_factory=list)
+    admins: list[str] = field(default_factory=list)
     allow_bots: str = "none"
     require_mention: bool = True
 
@@ -235,6 +228,9 @@ class LarkAdapter(ChannelAdapter):
         self._chat_locks: "OrderedDict[str, asyncio.Lock]" = OrderedDict()
         self._chat_locks_max = 1000
 
+        # Type annotation override for base class _running
+        self._running: bool = False
+
     # ==================================================================
     # ChannelAdapter 接口 — start / stop
     # ==================================================================
@@ -353,7 +349,7 @@ class LarkAdapter(ChannelAdapter):
                 msg_type="post" if "title" in content_json else "text",
                 reply_msg_id=reply_msg_id,
             )
-        except Exception as e:
+        except Exception:
             logger.exception("Lark send_response failed: chat_id=%s", chat_id)
 
     # ==================================================================
@@ -412,7 +408,7 @@ class LarkAdapter(ChannelAdapter):
                     },
                 )
 
-        except Exception as e:
+        except Exception:
             logger.exception("Lark get_user_info error: user_id=%s", user_id)
 
         return ChannelUser(
@@ -732,7 +728,7 @@ class LarkAdapter(ChannelAdapter):
             logger.debug("Lark message sent: msg_id=%s chat_id=%s", msg_id, chat_id)
             return msg_id
 
-        except Exception as e:
+        except Exception:
             logger.exception("Lark send_message exception: chat_id=%s", chat_id)
             if retries < self._lark_config.max_retries:
                 delay = self._lark_config.retry_delay * (2 ** retries)
@@ -773,7 +769,7 @@ class LarkAdapter(ChannelAdapter):
             content = json.dumps({"image_key": image_key})
             return await self._send_message(chat_id, content, msg_type="image")
 
-        except Exception as e:
+        except Exception:
             logger.exception("Lark send_image failed")
             raise
 
@@ -805,7 +801,7 @@ class LarkAdapter(ChannelAdapter):
             content = json.dumps({"file_key": file_key})
             return await self._send_message(chat_id, content, msg_type="file")
 
-        except Exception as e:
+        except Exception:
             logger.exception("Lark send_file failed")
             raise
 
@@ -835,13 +831,13 @@ class LarkAdapter(ChannelAdapter):
             return str(raw) if raw else ""
 
         if msg_type == "text":
-            return body.get("text", "")
+            return str(body.get("text", ""))
 
         if msg_type == "post":
             try:
                 # 使用 Hermes vendor 解析富文本
-                content_parts = parse_feishu_post_payload(body)
-                return " ".join(content_parts)
+                result = parse_feishu_post_payload(body)
+                return result.text_content
             except Exception:
                 # Fallback: 简单提取
                 return str(body)[:500]
@@ -863,20 +859,20 @@ class LarkAdapter(ChannelAdapter):
                 return str(body)[:500]
 
         if msg_type == "image":
-            image_key = body.get("image_key", "")
+            image_key = str(body.get("image_key", ""))
             return f"[Image: {image_key}]"
 
         if msg_type == "file":
-            file_key = body.get("file_key", "")
-            file_name = body.get("file_name", "unknown")
+            file_key = str(body.get("file_key", ""))
+            file_name = str(body.get("file_name", "unknown"))
             return f"[File: {file_name} (key={file_key})]"
 
         if msg_type == "audio":
-            file_key = body.get("file_key", "")
+            file_key = str(body.get("file_key", ""))
             return f"[Audio: key={file_key}]"
 
         if msg_type == "media":
-            file_key = body.get("file_key", "")
+            file_key = str(body.get("file_key", ""))
             return f"[Media: key={file_key}]"
 
         return ""
@@ -921,7 +917,8 @@ class LarkAdapter(ChannelAdapter):
         使用 Hermes vendor 的 _build_markdown_post_payload
         """
         try:
-            return _build_markdown_post_payload(text)
+            result = _build_markdown_post_payload(text)
+            return str(result)
         except Exception:
             # Fallback: 简单段落拆分
             paragraphs = text.split("\n\n")
@@ -943,9 +940,9 @@ class LarkAdapter(ChannelAdapter):
 
     def _resolve_send_target(self, message: ChannelMessage) -> str:
         """解析发送目标 chat_id"""
-        chat_id = message.metadata.get("chat_id", "")
+        chat_id = str(message.metadata.get("chat_id", ""))
         if not chat_id:
-            chat_id = message.session_id
+            chat_id = message.session_id or ""
         return chat_id
 
     # ==================================================================

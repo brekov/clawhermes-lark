@@ -10,6 +10,17 @@ from clawhermes_lark.adapter import (
     LarkEventType,
     create_lark_adapter,
 )
+from clawhermes_lark.client import BotIdentity, LarkClient
 
+from clawhermes_lark.messaging import (
+    FeishuReaction,
+    TypingIndicator,
+    add_reaction,
+    remove_reaction,
+    list_reactions,
+    edit_message,
+    build_markdown_card,
+    send_card,
+)
 __version__ = "0.1.0"
-__all__ = ["LarkAdapter", "LarkConfig", "LarkEventType", "create_lark_adapter"]
+__all__ = ["LarkAdapter", "LarkConfig", "LarkEventType", "create_lark_adapter", "BotIdentity", "LarkClient", "FeishuReaction", "TypingIndicator", "add_reaction", "remove_reaction", "list_reactions", "edit_message", "build_markdown_card", "send_card"]
