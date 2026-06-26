@@ -1,24 +1,15 @@
 """
-ClawHermes-Lark — 飞书/Lark 渠道适配器 v0.3.0
+ClawHermes-Lark openclaw 对齐层 — 功能对齐 larksuite/openclaw-lark
 
-分层架构：
-  adapter/       — ClawHermes ChannelAdapter 适配层
-  openclaw/      — 功能对齐 larksuite/openclaw-lark
-  hermes_vendor/ — 复用 NousResearch/hermes-agent 消息解析引擎
-
-独立 pip 包：pip install clawhermes-lark
+本层实现了 larksuite/openclaw-lark 飞书消息渠道的全部核心功能和交互逻辑：
+  - 消息管道: 去重、串行队列、中止检测、目标规范化
+  - 卡片系统: Card Builder、Streaming Card、Reply Dispatcher、Tool Use Display
+  - 交互层: Interactive Dispatch (card.action.trigger)
+  - 工具层: OAPI Tools (sheets/calendar/drive/wiki/docs/im/search)
+  - 引导层: Onboarding (配对欢迎卡 + OAuth)
+  - 账户与安全: 多账户、安全检查
 """
-
-# ── Layer 1: ClawHermes 适配层 ──
-from clawhermes_lark.adapter.adapter import (
-    LarkAdapter,
-    LarkConfig,
-    LarkEventType,
-    create_lark_adapter,
-)
-from clawhermes_lark.adapter.client import BotIdentity, LarkClient
-
-# ── Layer 2: openclaw-lark 对齐（全量 re-export）──
+# ── 消息管道 ───────────────────────────────────────────────────────
 from clawhermes_lark.openclaw.chat_queue import (
     ActiveDispatcherEntry,
     build_queue_key,
@@ -28,11 +19,7 @@ from clawhermes_lark.openclaw.chat_queue import (
     register_active_dispatcher,
     unregister_active_dispatcher,
 )
-from clawhermes_lark.openclaw.dedup import (
-    MessageDedup,
-    is_message_expired,
-    create_message_dedup,
-)
+from clawhermes_lark.openclaw.dedup import MessageDedup, is_message_expired, create_message_dedup
 from clawhermes_lark.openclaw.abort_detect import (
     is_abort_trigger,
     is_likely_abort_text,
@@ -47,6 +34,8 @@ from clawhermes_lark.openclaw.targets import (
     looks_like_feishu_id,
     normalize_message_id,
 )
+
+# ── 消息交互 ───────────────────────────────────────────────────────
 from clawhermes_lark.openclaw.messaging import (
     FeishuReaction,
     TypingIndicator,
@@ -57,6 +46,8 @@ from clawhermes_lark.openclaw.messaging import (
     build_markdown_card,
     send_card,
 )
+
+# ── 卡片系统 ───────────────────────────────────────────────────────
 from clawhermes_lark.openclaw.card_builder import (
     build_card,
     build_thinking_card,
@@ -81,6 +72,18 @@ from clawhermes_lark.openclaw.reply_dispatcher import (
     resolve_reply_mode,
     resolve_footer_config,
 )
+from clawhermes_lark.openclaw.flush_controller import FlushController
+from clawhermes_lark.openclaw.card_error import (
+    is_card_rate_limit_error,
+    is_card_table_limit_error,
+    sanitize_card_content,
+)
+from clawhermes_lark.openclaw.footer_config import (
+    resolve_footer_config,
+    build_footer_text,
+)
+
+# ── 交互 ───────────────────────────────────────────────────────────
 from clawhermes_lark.openclaw.interactive import (
     InteractiveDispatcher,
     InteractiveHandler,
@@ -88,6 +91,8 @@ from clawhermes_lark.openclaw.interactive import (
     InteractiveRespond,
     get_interactive_dispatcher,
 )
+
+# ── 账户与安全 ─────────────────────────────────────────────────────
 from clawhermes_lark.openclaw.accounts import (
     LarkAccount,
     get_lark_account,
@@ -99,16 +104,8 @@ from clawhermes_lark.openclaw.security import (
     collect_isolation_warnings,
     validate_allow_from,
 )
-from clawhermes_lark.openclaw.flush_controller import FlushController
-from clawhermes_lark.openclaw.card_error import (
-    is_card_rate_limit_error,
-    is_card_table_limit_error,
-    sanitize_card_content,
-)
-from clawhermes_lark.openclaw.footer_config import (
-    resolve_footer_config,
-    build_footer_text,
-)
+
+# ── OAPI 工具 ──────────────────────────────────────────────────────
 from clawhermes_lark.openclaw.oapi_tools import (
     OAPI_TOOL_REGISTRY,
     get_oapi_tool,
@@ -135,6 +132,8 @@ from clawhermes_lark.openclaw.oapi_tools import (
     common_search_users,
     search_enterprise,
 )
+
+# ── Onboarding ─────────────────────────────────────────────────────
 from clawhermes_lark.openclaw.onboarding import (
     build_welcome_card,
     trigger_onboarding,
@@ -145,5 +144,3 @@ from clawhermes_lark.openclaw.onboarding import (
     load_onboarding_state,
     save_onboarding_state,
 )
-
-__version__ = "0.3.0"

@@ -19,7 +19,7 @@ import logging
 from collections import OrderedDict
 from typing import Any, Callable
 
-from clawhermes_lark.card_builder import (
+from clawhermes_lark.openclaw.card_builder import (
     build_markdown_element,
     build_card,
     to_cardkit_v2,

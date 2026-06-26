@@ -103,54 +103,33 @@ clawhermes_lark/
     ├── feishu_hermes.py     # 消息解析 / Markdown 转换 / @提及
     └── _compat.py           # 向后兼容层
 ```
-
-## 快速开始
-
-```python
-from clawhermes_lark import LarkClient, LarkAdapter, LarkConfig
-
-# 1. 连接探测
-client = LarkClient.from_credentials(
-    app_id="cli_xxx",
-    app_secret="xxx",
-    domain="feishu",
-)
-identity = await client.get_bot_identity()
-print(f"Connected as {identity.name}")
-
-# 2. 渠道适配器
-config = LarkConfig(
-    app_id="cli_xxx",
-    app_secret="xxx",
-    domain="feishu",
-    group_policy="allowlist",
-    reaction_notifications="own",  # "off" | "own" | "all"
-)
-adapter = LarkAdapter(config)
-await adapter.start()
-
-# 3. 消息交互
-from clawhermes_lark import TypingIndicator, add_reaction
-
-async with TypingIndicator(client, message_id):
-    await process_request()  # 自动显示"正在输入"
-
-# 4. 卡片系统
-from clawhermes_lark import (
-    build_card,
-    build_streaming_card,
-    StreamingCardController,
-    ReplyDispatcher,
-)
-
-# 5. 交互式卡片
-from clawhermes_lark import (
-    InteractiveHandler,
-    get_interactive_dispatcher,
-)
-handler = InteractiveHandler(namespace="my_plugin")
-handler.on_action("confirm", my_handler_fn)
-get_interactive_dispatcher().register(handler)
+clawhermes_lark/
+├── adapter/              # Layer 1: ClawHermes 适配层
+│   ├── adapter.py        #   LarkAdapter — ChannelAdapter 实现
+│   └── client.py         #   LarkClient — 多账户 SDK 管理器
+│
+├── openclaw/             # Layer 2: 对齐 larksuite/openclaw-lark
+│   ├── messaging.py      #   Reactions / Typing / Edit / Card
+│   ├── chat_queue.py     #   串行任务队列 (process-level singleton)
+│   ├── dedup.py          #   FIFO 消息去重 (TTL + sweep)
+│   ├── abort_detect.py   #   中止触发检测 (40+ 语言)
+│   ├── targets.py        #   ID 规范化 (chat:/user:/feishu:)
+│   ├── card_builder.py   #   交互式卡片构建 (4 种状态)
+│   ├── streaming_card.py #   流式卡片状态机
+│   ├── reply_dispatcher.py # 回复分发工厂
+│   ├── tool_use_display.py # 工具调用卡片显示
+│   ├── flush_controller.py # 卡片刷新节流
+│   ├── card_error.py     #   卡片错误检测
+│   ├── footer_config.py  #   卡片页脚配置
+│   ├── interactive.py    #   交互式卡片回调分发
+│   ├── accounts.py       #   多账户支持
+│   ├── security.py       #   安全检查
+│   ├── oapi_tools.py     #   OAPI 工具 (20 tools)
+│   └── onboarding.py     #   配对引导 + OAuth 预授权
+│
+└── hermes_vendor/        # Layer 3: 复用 NousResearch/hermes-agent
+    ├── feishu_hermes.py  #   消息解析 / Markdown 转换 / @提及
+    └── _compat.py        #   向后兼容层
 ```
 
 ## API 参考

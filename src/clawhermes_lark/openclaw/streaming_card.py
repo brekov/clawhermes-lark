@@ -19,7 +19,7 @@ import logging
 import time
 from typing import Any, Callable
 
-from clawhermes_lark.card_builder import (
+from clawhermes_lark.openclaw.card_builder import (
     STREAMING_ELEMENT_ID,
     REASONING_ELEMENT_ID,
     build_complete_card,
@@ -29,13 +29,13 @@ from clawhermes_lark.card_builder import (
     split_reasoning_text,
     to_cardkit_v2,
 )
-from clawhermes_lark.card_error import (
+from clawhermes_lark.openclaw.card_error import (
     is_card_error,
     is_card_rate_limit_error,
     sanitize_text_segments_for_card,
 )
-from clawhermes_lark.flush_controller import FlushController
-from clawhermes_lark.tool_use_display import (
+from clawhermes_lark.openclaw.flush_controller import FlushController
+from clawhermes_lark.openclaw.tool_use_display import (
     build_tool_use_summary,
     build_tool_use_title_suffix,
 )
