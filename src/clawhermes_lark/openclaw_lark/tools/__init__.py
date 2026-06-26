@@ -1,4 +1,9 @@
 """tools/ — 工具层（对齐 openclaw-lark src/tools/）"""
+from clawhermes_lark.openclaw_lark.tools.helpers import (
+    format_tool_result, format_tool_error,
+    validate_required_params, validate_enum,
+    create_tool_logger, safe_json_parse, safe_json_dumps,
+)
 from clawhermes_lark.openclaw_lark.tools.oapi_tools import (
     OAPI_TOOL_REGISTRY, get_oapi_tool, list_oapi_tools, invoke_oapi_tool,
     sheets_get_meta, sheets_read_values, sheets_write_values, sheets_list,
@@ -15,4 +20,8 @@ from clawhermes_lark.openclaw_lark.tools.onboarding import (
     mark_onboarding_complete, load_onboarding_state, save_onboarding_state,
     start_device_flow_onboarding, complete_device_flow_onboarding,
     build_device_flow_card,
+)
+from clawhermes_lark.openclaw_lark.tools.ask_user_question import (
+    QuestionItem, QuestionContext,
+    ask_user_question, handle_ask_user_action,
 )

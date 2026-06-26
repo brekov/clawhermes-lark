@@ -19,3 +19,8 @@ from clawhermes_lark.openclaw_lark.channel.interactive import (
     InteractiveDispatcher, InteractiveHandler, InteractiveContext,
     InteractiveRespond, get_interactive_dispatcher,
 )
+from clawhermes_lark.openclaw_lark.channel.directory import (
+    DirectoryPeer, DirectoryGroup,
+    list_feishu_directory_peers, list_feishu_directory_peers_live,
+    list_feishu_directory_groups, list_feishu_directory_groups_live,
+)
