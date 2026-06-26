@@ -49,6 +49,17 @@ from clawhermes_lark.openclaw_lark.core import (
     get_default_lark_account_id,
     collect_security_warnings, collect_isolation_warnings, validate_allow_from,
 )
+
+# ── Device Flow (OAuth 扫码授权) ──
+from clawhermes_lark.openclaw_lark.core.device_flow import (
+    DeviceAuthResponse, DeviceFlowTokenData, DeviceFlowResult,
+    resolve_oauth_endpoints,
+    request_device_authorization,
+    poll_device_token,
+    run_device_flow,
+    build_qr_code_url,
+    build_auth_card_qr_text,
+)
 from clawhermes_lark.openclaw_lark.tools import (
     OAPI_TOOL_REGISTRY, get_oapi_tool, list_oapi_tools, invoke_oapi_tool,
     sheets_get_meta, sheets_read_values, sheets_write_values, sheets_list,

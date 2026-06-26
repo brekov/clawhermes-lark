@@ -362,7 +362,8 @@ WebSocket Event
 | Footer 配置 | 可配置元数据 | ✅ |
 | reply mode | streaming / static / auto | ✅ |
 | OAPI 工具 | sheets/calendar/drive/wiki/docs/im | ✅ (20) |
-| Onboarding | 配对引导 + OAuth | ✅ |
+| Onboarding | 配对引导 + 欢迎卡 | ✅ |
+| Device Flow | OAuth 扫码授权 (RFC 8628) | ✅ |
 | VC Meeting | vc.bot.meeting_invited | ✅ (stub) |
 | Drive Comment | drive.notice.comment | ✅ (stub) |
 

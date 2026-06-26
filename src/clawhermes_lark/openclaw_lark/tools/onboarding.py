@@ -325,3 +325,150 @@ def save_onboarding_state(data_dir: str = "") -> None:
             raise
     except Exception:
         logger.debug("Failed to save onboarding state", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Device Flow onboarding — 扫码授权
+# ---------------------------------------------------------------------------
+
+
+async def start_device_flow_onboarding(
+    app_id: str,
+    app_secret: str,
+    brand: str = "feishu",
+    scopes: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    发起 Device Flow 授权流程.
+
+    返回包含 device_code, user_code, verification_uri 等信息，
+    调用方可据此生成二维码展示给用户。
+
+    Returns:
+        dict with keys: device_code, user_code, verification_uri,
+        verification_uri_complete, expires_in, interval,
+        qr_text (卡片中展示的 markdown 文本)
+    """
+    from clawhermes_lark.openclaw_lark.core.device_flow import (
+        request_device_authorization,
+        build_auth_card_qr_text,
+    )
+
+    try:
+        auth_resp = await request_device_authorization(
+            app_id=app_id,
+            app_secret=app_secret,
+            brand=brand,
+            scopes=scopes,
+        )
+
+        qr_text = build_auth_card_qr_text(auth_resp)
+
+        return {
+            "ok": True,
+            "device_code": auth_resp.device_code,
+            "user_code": auth_resp.user_code,
+            "verification_uri": auth_resp.verification_uri,
+            "verification_uri_complete": auth_resp.verification_uri_complete,
+            "expires_in": auth_resp.expires_in,
+            "interval": auth_resp.interval,
+            "qr_text": qr_text,
+        }
+    except Exception as e:
+        logger.exception("Device flow onboarding failed")
+        return {"ok": False, "error": str(e)}
+
+
+async def complete_device_flow_onboarding(
+    app_id: str,
+    app_secret: str,
+    brand: str,
+    device_code: str,
+    interval: int = 5,
+    expires_in: int = 300,
+    cancel_event: asyncio.Event | None = None,
+) -> dict[str, Any]:
+    """
+    轮询完成 Device Flow，获取 access_token.
+
+    在调用 start_device_flow_onboarding 之后，将此函数作为后台任务
+    运行以轮询授权结果。
+
+    Returns:
+        dict with ok, token (access_token, refresh_token, ...) or error
+    """
+    from clawhermes_lark.openclaw_lark.core.device_flow import poll_device_token
+
+    result = await poll_device_token(
+        app_id=app_id,
+        app_secret=app_secret,
+        brand=brand,
+        device_code=device_code,
+        interval=interval,
+        expires_in=expires_in,
+        cancel_event=cancel_event,
+    )
+
+    if result.ok and result.token:
+        return {
+            "ok": True,
+            "access_token": result.token.access_token,
+            "refresh_token": result.token.refresh_token,
+            "expires_in": result.token.expires_in,
+            "scope": result.token.scope,
+        }
+    else:
+        return {
+            "ok": False,
+            "error": result.error,
+            "message": result.message,
+        }
+
+
+def build_device_flow_card(
+    user_code: str,
+    verification_uri: str,
+    verification_uri_complete: str = "",
+    expires_minutes: int = 5,
+) -> dict[str, Any]:
+    """
+    构建 Device Flow 授权卡片（可发送到飞书).
+
+    包含授权链接和手动输入指引.
+    """
+    uri = verification_uri_complete or f"{verification_uri}?user_code={user_code}"
+
+    elements: list[dict] = [
+        {
+            "tag": "markdown",
+            "content": (
+                f"📱 **授权机器人访问 Feishu**\n\n"
+                f"请点击下方链接完成授权（有效期 {expires_minutes} 分钟）：\n\n"
+                f"🔗 [{uri}]({uri})\n\n"
+                f"或手动输入：\n"
+                f"- 授权码：**`{user_code}`**\n"
+                f"- 验证地址：{verification_uri}"
+            ),
+        },
+        {
+            "tag": "hr",
+        },
+        {
+            "tag": "note",
+            "elements": [
+                {
+                    "tag": "plain_text",
+                    "content": "💡 授权完成后 Bot 即可访问你在飞书的文档、日历等资源",
+                }
+            ],
+        },
+    ]
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "🔐 授权机器人"},
+            "template": "blue",
+        },
+        "elements": elements,
+    }

@@ -13,4 +13,6 @@ from clawhermes_lark.openclaw_lark.tools.onboarding import (
     build_welcome_card, trigger_onboarding, trigger_onboarding_auth,
     handle_onboarding_card_action, is_onboarding_complete,
     mark_onboarding_complete, load_onboarding_state, save_onboarding_state,
+    start_device_flow_onboarding, complete_device_flow_onboarding,
+    build_device_flow_card,
 )
