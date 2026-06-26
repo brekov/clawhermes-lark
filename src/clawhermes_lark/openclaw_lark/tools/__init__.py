@@ -20,6 +20,9 @@ from clawhermes_lark.openclaw_lark.tools.onboarding import (
     mark_onboarding_complete, load_onboarding_state, save_onboarding_state,
     start_device_flow_onboarding, complete_device_flow_onboarding,
     build_device_flow_card,
+    run_setup_qr_code_flow, run_setup_manual_flow, build_setup_mode_card,
+    parse_allow_from_input, set_feishu_allow_from,
+    set_feishu_group_policy, set_feishu_group_allow_from,
 )
 from clawhermes_lark.openclaw_lark.tools.ask_user_question import (
     QuestionItem, QuestionContext,

@@ -644,3 +644,69 @@ def build_setup_mode_card(show_qr_url: str = "") -> dict[str, Any]:
         },
         "elements": elements,
     }
+
+
+# ---------------------------------------------------------------------------
+# Onboarding Config Helpers — 对齐 onboarding-config.ts
+# ---------------------------------------------------------------------------
+
+
+def parse_allow_from_input(raw_input: str) -> list[str]:
+    """
+    解析 allow_from 输入字符串.
+
+    支持逗号、空格、换行分隔.
+    自动识别 feishu: 和 user: 前缀并剥离.
+    """
+    import re
+
+    # 按逗号、空格、换行拆分
+    parts = re.split(r'[,\s\n]+', raw_input.strip())
+    result = []
+
+    for part in parts:
+        part = part.strip().lower()
+        if not part:
+            continue
+
+        # 剥离 feishu: / user: / open_id: 前缀
+        for prefix in ("feishu:", "user:", "open_id:"):
+            if part.startswith(prefix):
+                part = part[len(prefix):]
+                break
+
+        if part and (part.startswith("ou_") or part.startswith("on_")):
+            result.append(part)
+
+    return result
+
+
+def set_feishu_allow_from(config: dict, allow_from: list[str]) -> dict:
+    """设置 Feishu DM 白名单."""
+    channels = config.get("channels", {})
+    feishu = dict(channels.get("feishu", {}))
+    feishu["allowFrom"] = allow_from
+    feishu["dmPolicy"] = "allowlist"
+    channels["feishu"] = feishu
+    config["channels"] = channels
+    return config
+
+
+def set_feishu_group_policy(config: dict, policy: str) -> dict:
+    """设置群聊策略."""
+    channels = config.get("channels", {})
+    feishu = dict(channels.get("feishu", {}))
+    feishu["groupPolicy"] = policy
+    channels["feishu"] = feishu
+    config["channels"] = channels
+    return config
+
+
+def set_feishu_group_allow_from(config: dict, group_allow_from: list[str]) -> dict:
+    """设置群聊白名单."""
+    channels = config.get("channels", {})
+    feishu = dict(channels.get("feishu", {}))
+    feishu["groupAllowFrom"] = group_allow_from
+    channels["feishu"] = feishu
+    config["channels"] = channels
+    return config
