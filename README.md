@@ -104,32 +104,37 @@ clawhermes_lark/
     └── _compat.py           # 向后兼容层
 ```
 clawhermes_lark/
-├── adapter/              # Layer 1: ClawHermes 适配层
-│   ├── adapter.py        #   LarkAdapter — ChannelAdapter 实现
-│   └── client.py         #   LarkClient — 多账户 SDK 管理器
+├── adapter/                     # Layer 1: ClawHermes 适配层
+│   ├── adapter.py               #   LarkAdapter — ChannelAdapter 实现
+│   └── client.py                #   LarkClient — 多账户 SDK 管理器
 │
-├── openclaw/             # Layer 2: 对齐 larksuite/openclaw-lark
-│   ├── messaging.py      #   Reactions / Typing / Edit / Card
-│   ├── chat_queue.py     #   串行任务队列 (process-level singleton)
-│   ├── dedup.py          #   FIFO 消息去重 (TTL + sweep)
-│   ├── abort_detect.py   #   中止触发检测 (40+ 语言)
-│   ├── targets.py        #   ID 规范化 (chat:/user:/feishu:)
-│   ├── card_builder.py   #   交互式卡片构建 (4 种状态)
-│   ├── streaming_card.py #   流式卡片状态机
-│   ├── reply_dispatcher.py # 回复分发工厂
-│   ├── tool_use_display.py # 工具调用卡片显示
-│   ├── flush_controller.py # 卡片刷新节流
-│   ├── card_error.py     #   卡片错误检测
-│   ├── footer_config.py  #   卡片页脚配置
-│   ├── interactive.py    #   交互式卡片回调分发
-│   ├── accounts.py       #   多账户支持
-│   ├── security.py       #   安全检查
-│   ├── oapi_tools.py     #   OAPI 工具 (20 tools)
-│   └── onboarding.py     #   配对引导 + OAuth 预授权
+├── openclaw_lark/              # Layer 2: 对齐 larksuite/openclaw-lark
+│   ├── channel/                 #   src/channel/
+│   │   ├── chat_queue.py        #     串行任务队列
+│   │   ├── dedup.py             #     FIFO 消息去重
+│   │   ├── abort_detect.py      #     中止触发检测
+│   │   ├── targets.py           #     ID 规范化
+│   │   └── interactive.py       #     交互式卡片分发
+│   ├── card/                    #   src/card/
+│   │   ├── builder.py           #     交互式卡片构建 (4 种状态)
+│   │   ├── streaming.py         #     流式卡片状态机
+│   │   ├── reply.py             #     回复分发工厂
+│   │   ├── tool_use.py          #     工具调用卡片显示
+│   │   ├── flush.py             #     卡片刷新节流
+│   │   ├── error.py             #     卡片错误检测
+│   │   └── footer.py            #     卡片页脚配置
+│   ├── messaging/               #   src/messaging/
+│   │   └── messaging.py         #     Reactions / Typing / Edit / Card
+│   ├── core/                    #   src/core/
+│   │   ├── accounts.py          #     多账户支持
+│   │   └── security.py          #     安全检查
+│   └── tools/                   #   src/tools/
+│       ├── oapi_tools.py        #     OAPI 工具 (20 tools)
+│       └── onboarding.py        #     配对引导 + OAuth
 │
-└── hermes_vendor/        # Layer 3: 复用 NousResearch/hermes-agent
-    ├── feishu_hermes.py  #   消息解析 / Markdown 转换 / @提及
-    └── _compat.py        #   向后兼容层
+└── hermes_vendor/               # Layer 3: 复用 NousResearch/hermes-agent
+    ├── feishu_hermes.py         #   消息解析 / Markdown 转换 / @提及
+    └── _compat.py               #   独立运行兼容层
 ```
 
 ## API 参考

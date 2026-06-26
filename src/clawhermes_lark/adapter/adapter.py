@@ -57,7 +57,7 @@ from clawhermes_lark.hermes_vendor import (
 )
 
 # ── ClawHermes-Lark 增强模块 ────────────────────────────────────────────
-from clawhermes_lark.openclaw.chat_queue import (
+from clawhermes_lark.openclaw_lark.channel.chat_queue import (
     ActiveDispatcherEntry,
     build_queue_key,
     enqueue_feishu_chat_task,
@@ -66,17 +66,17 @@ from clawhermes_lark.openclaw.chat_queue import (
     register_active_dispatcher,
     unregister_active_dispatcher,
 )
-from clawhermes_lark.openclaw.dedup import MessageDedup, is_message_expired
-from clawhermes_lark.openclaw.abort_detect import (
+from clawhermes_lark.openclaw_lark.channel.dedup import MessageDedup, is_message_expired
+from clawhermes_lark.openclaw_lark.channel.abort_detect import (
     extract_raw_text_from_event,
     is_likely_abort_text,
 )
-from clawhermes_lark.openclaw.targets import (
+from clawhermes_lark.openclaw_lark.channel.targets import (
     normalize_feishu_target,
     resolve_receive_id_type,
 )
-from clawhermes_lark.openclaw.interactive import get_interactive_dispatcher
-from clawhermes_lark.openclaw.accounts import (
+from clawhermes_lark.openclaw_lark.channel.interactive import get_interactive_dispatcher
+from clawhermes_lark.openclaw_lark.core.accounts import (
     DEFAULT_ACCOUNT_ID,
     LarkAccount,
     get_lark_account,

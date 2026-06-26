@@ -17,7 +17,7 @@ import asyncio
 import logging
 from typing import Any, Callable
 
-from clawhermes_lark.openclaw.streaming_card import StreamingCardController
+from clawhermes_lark.openclaw_lark.card.streaming import StreamingCardController
 
 logger = logging.getLogger("clawhermes.lark.reply_dispatcher")
 
@@ -98,7 +98,7 @@ class TypingIndicatorManager:
         if self._active:
             return
         try:
-            from clawhermes_lark.openclaw.messaging import add_reaction
+            from clawhermes_lark.openclaw_lark.messaging.messaging import add_reaction
             result = await add_reaction(
                 self._client, self._message_id, "CLOCK"
             )
@@ -114,7 +114,7 @@ class TypingIndicatorManager:
             return
         try:
             if self._reaction_id:
-                from clawhermes_lark.openclaw.messaging import remove_reaction
+                from clawhermes_lark.openclaw_lark.messaging.messaging import remove_reaction
                 await remove_reaction(
                     self._client, self._message_id, self._reaction_id
                 )
@@ -127,7 +127,7 @@ class TypingIndicatorManager:
         """Swap typing indicator to error (cross mark)."""
         await self.stop()
         try:
-            from clawhermes_lark.openclaw.messaging import add_reaction
+            from clawhermes_lark.openclaw_lark.messaging.messaging import add_reaction
             await add_reaction(self._client, self._message_id, "CROSS_MARK")
         except Exception:
             logger.debug("Failed to swap to error reaction", exc_info=True)

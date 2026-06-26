@@ -30,7 +30,7 @@ def collect_security_warnings(
     warnings: list[str] = []
 
     if not feishu_cfg and config:
-        from clawhermes_lark.openclaw.accounts import get_lark_account
+        from clawhermes_lark.openclaw_lark.core.accounts import get_lark_account
         account = get_lark_account(config, account_id)
         feishu_cfg = account.config
 
@@ -92,7 +92,7 @@ def collect_isolation_warnings(config: dict | None = None) -> list[str]:
         return warnings
 
     try:
-        from clawhermes_lark.openclaw.accounts import get_lark_account_ids, get_lark_account
+        from clawhermes_lark.openclaw_lark.core.accounts import get_lark_account_ids, get_lark_account
         ids = get_lark_account_ids(config)
         if len(ids) <= 1:
             return warnings
@@ -139,5 +139,5 @@ def is_feishu_id_valid(raw_id: str) -> bool:
     """Basic validation that a string looks like a valid Feishu ID."""
     if not raw_id or not isinstance(raw_id, str):
         return False
-    from clawhermes_lark.openclaw.targets import detect_id_type
+    from clawhermes_lark.openclaw_lark.channel.targets import detect_id_type
     return detect_id_type(raw_id) is not None
