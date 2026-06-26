@@ -98,21 +98,30 @@ class QuestionContext:
 # ---------------------------------------------------------------------------
 
 _pending_questions: dict[str, QuestionContext] = {}
-_lock = asyncio.Lock()
+_lock: asyncio.Lock | None = None  # lazy init to avoid requiring event loop at import time
+
+
+
+def _get_lock() -> asyncio.Lock:
+    """Get or lazily create the async lock."""
+    global _lock
+    if _lock is None:
+        _lock = asyncio.Lock()
+    return _lock
 
 
 async def _register_question(ctx: QuestionContext) -> None:
-    async with _lock:
+    async with _get_lock():
         _pending_questions[ctx.question_id] = ctx
 
 
 async def _unregister_question(question_id: str) -> QuestionContext | None:
-    async with _lock:
+    async with _get_lock():
         return _pending_questions.pop(question_id, None)
 
 
 async def _get_question(question_id: str) -> QuestionContext | None:
-    async with _lock:
+    async with _get_lock():
         ctx = _pending_questions.get(question_id)
         if ctx and ctx.is_expired:
             _pending_questions.pop(question_id, None)
