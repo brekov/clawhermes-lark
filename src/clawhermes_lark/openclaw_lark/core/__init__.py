@@ -12,6 +12,19 @@ from clawhermes_lark.openclaw_lark.core.device_flow import (
     poll_device_token, run_device_flow,
     build_qr_code_url, build_auth_card_qr_text,
 )
+from clawhermes_lark.openclaw_lark.core.app_registration import (
+    AppRegistrationInitResult,
+    AppRegistrationBeginResult,
+    AppRegistrationPollResult,
+    app_registration_init,
+    app_registration_begin,
+    app_registration_poll,
+    run_qr_code_app_creation,
+    render_qr_terminal,
+    build_qr_guide_text,
+    get_app_owner_open_id,
+    apply_auto_security_policy,
+)
 from clawhermes_lark.openclaw_lark.core.lark_ticket import (
     LarkTicket, create_ticket, track_ticket, untrack_ticket,
     get_ticket, get_active_tickets, with_ticket, ticket_elapsed,

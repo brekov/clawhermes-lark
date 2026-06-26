@@ -471,3 +471,176 @@ def build_device_flow_card(
         },
         "elements": elements,
     }
+
+
+# ---------------------------------------------------------------------------
+# Setup Wizard — 两种创建方式（对齐 setup-surface.ts）
+# ---------------------------------------------------------------------------
+
+
+async def run_setup_qr_code_flow(
+    brand: str = "feishu",
+    show_qr: bool = True,
+    cancel_event: asyncio.Event | None = None,
+) -> dict[str, Any]:
+    """
+    方式一：扫码创建 — 完整的 App Registration Flow.
+
+    1. init → 检查环境
+    2. begin → 生成 QR 码（自动创建"个人 Agent"应用）
+    3. 展示 QR 码（终端或卡片）
+    4. poll → 轮询 → 返回 appId + appSecret + openId
+
+    Returns:
+        {"ok": True, "app_id": "...", "app_secret": "...", "open_id": "..."}
+        或 {"ok": False, "error": "..."}
+    """
+    from clawhermes_lark.openclaw_lark.core.app_registration import (
+        app_registration_init,
+        app_registration_begin,
+        app_registration_poll,
+        build_qr_guide_text,
+    )
+
+    # Step 1: Init
+    init = await app_registration_init(brand)
+    if not init.ok:
+        return {"ok": False, "error": f"环境检查失败: {init.error}"}
+    if not init.supports_client_secret:
+        return {
+            "ok": False,
+            "error": "当前环境不支持自动创建应用，请使用手动配置方式",
+            "fallback_to_manual": True,
+        }
+
+    # Step 2: Begin
+    begin = await app_registration_begin(brand)
+    if not begin.ok:
+        return {"ok": False, "error": f"创建失败: {begin.error}"}
+
+    # Step 3: 展示 QR 码
+    if show_qr:
+        qr_text = build_qr_guide_text(begin)
+        # 调用方可以将 qr_text 发送到终端或飞书卡片
+        logger.info("QR code for app registration:\n%s", qr_text)
+
+    # Step 4: Poll
+    poll = await app_registration_poll(
+        brand=brand,
+        device_code=begin.device_code,
+        interval=begin.interval,
+        expire_in=begin.expire_in,
+        cancel_event=cancel_event,
+    )
+
+    if not poll.ok:
+        return {"ok": False, "error": poll.error}
+
+    return {
+        "ok": True,
+        "app_id": poll.client_id,
+        "app_secret": poll.client_secret,
+        "open_id": poll.open_id,
+        "mode": "qr_code",
+    }
+
+
+async def run_setup_manual_flow(
+    app_id: str,
+    app_secret: str,
+    client=None,
+) -> dict[str, Any]:
+    """
+    方式二：手动配置 — 用户已在 open.feishu.cn 创建应用.
+
+    填入 App ID / App Secret 后：
+      1. 验证凭证（probe）
+      2. 自动获取 owner open_id
+      3. 应用自动安全策略
+
+    Returns:
+        {"ok": True, "open_id": "..."} 或 {"ok": False, "error": "..."}
+    """
+    from clawhermes_lark.openclaw_lark.core.app_registration import (
+        get_app_owner_open_id,
+    )
+    from clawhermes_lark.adapter.client import LarkClient
+
+    if not app_id or not app_secret:
+        return {"ok": False, "error": "缺少 App ID 或 App Secret"}
+
+    # 验证凭证
+    try:
+        if client is None:
+            lc = LarkClient.from_credentials(app_id=app_id, app_secret=app_secret)
+        else:
+            lc = client
+
+        identity = await lc.get_bot_identity()
+        if identity is None:
+            return {"ok": False, "error": "凭证验证失败，请检查 App ID / App Secret"}
+
+        # 获取 owner open_id
+        open_id = await get_app_owner_open_id(lc.sdk if hasattr(lc, 'sdk') else lc._client)
+
+        return {
+            "ok": True,
+            "open_id": open_id,
+            "bot_name": identity.name,
+            "mode": "manual",
+        }
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def build_setup_mode_card(show_qr_url: str = "") -> dict[str, Any]:
+    """
+    构建配置模式选择卡片 — "扫码创建" 或 "手动配置".
+    """
+    elements: list[dict] = [
+        {
+            "tag": "markdown",
+            "content": (
+                "## 🤖 配置飞书 Bot\n\n"
+                "请选择创建方式：\n\n"
+                "**方式一：扫码创建（推荐）**\n"
+                "使用飞书 App 扫描二维码，自动创建企业自建应用\n\n"
+                "**方式二：手动配置**\n"
+                "前往 open.feishu.cn 手动创建应用，填入凭证"
+            ),
+        },
+    ]
+
+    if show_qr_url:
+        elements.append({
+            "tag": "markdown",
+            "content": f"🔗 [扫码创建]({show_qr_url})",
+        })
+
+    elements.append({
+        "tag": "action",
+        "actions": [
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "📱 扫码创建"},
+                "type": "primary",
+                "value": {"action": "setup:qr_code"},
+            },
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "⌨️ 手动配置"},
+                "type": "default",
+                "value": {"action": "setup:manual"},
+            },
+        ],
+    })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "⚙️ 配置飞书 Bot"},
+            "template": "blue",
+        },
+        "elements": elements,
+    }
