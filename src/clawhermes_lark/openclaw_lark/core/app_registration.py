@@ -88,8 +88,8 @@ class AppRegistrationPollResult:
 def _post_registration(brand: str, body: dict[str, Any], timeout: int = 30) -> dict:
     """向 App Registration API 发送 POST 请求."""
     endpoint = _get_endpoint(brand)
-    data = json.dumps(body).encode()
-    headers = {"Content-Type": "application/json"}
+    data = urllib.parse.urlencode(body).encode()
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
     try:
@@ -128,7 +128,9 @@ async def app_registration_init(brand: str = "feishu") -> AppRegistrationInitRes
             )
 
         # 检查是否支持 client_secret
-        supports = resp.get("supports_client_secret", False)
+        # API 返回 supported_auth_methods 数组
+        auth_methods = resp.get("supported_auth_methods", [])
+        supports = "client_secret" in auth_methods if isinstance(auth_methods, list) else False
 
         return AppRegistrationInitResult(
             ok=True,
