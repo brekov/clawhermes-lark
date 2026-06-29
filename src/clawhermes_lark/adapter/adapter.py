@@ -41,6 +41,7 @@ from lark_oapi.api.im.v1 import (
     CreateMessageRequest,
     CreateMessageRequestBody,
 )
+from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
 
 from clawhermes.channel.adapter import (
     ChannelAdapter,
@@ -275,6 +276,10 @@ class LarkAdapter(ChannelAdapter):
         # Type annotation override for base class _running
         self._running: bool = False
 
+        # ── EventDispatcherHandler (lark-oapi) + loop ref for sync→async bridge ──
+        self._event_dispatcher: EventDispatcherHandler | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
     # ==================================================================
     # ChannelAdapter 接口 — start / stop
     # ==================================================================
@@ -309,6 +314,18 @@ class LarkAdapter(ChannelAdapter):
             self._lark_config.domain,
             self._lark_config.account_id,
         )
+
+        # 捕获当前事件循环 — sync→async 桥接需要 (lark_oapi 的 P2 处理器是同步调用的)
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = asyncio.get_event_loop()
+
+        # 构建 lark-oapi EventDispatcherHandler 并注册 P2 事件处理器
+        # lark.ws.Client 要求 event_handler 为 EventDispatcherHandler 实例，
+        # 它内部通过 "p2.<event_type>" 键查找 processor 并同步调用 processor.do(data)。
+        # 我们的 _handle_* 方法是 async，因此通过 _sync_wrap 调度协程。
+        self._event_dispatcher = self._build_event_dispatcher()
 
         # 注册核心事件处理器
         self._event_handlers[LarkEventType.MESSAGE_RECEIVE] = self._handle_message_receive
@@ -375,9 +392,19 @@ class LarkAdapter(ChannelAdapter):
                 logger.debug("Lark WS task cleanup: %s", e)
 
         # 停止 WebSocket 客户端
+        # 注意：lark.ws.Client 没有 stop() 方法，start() 通过 loop.run_until_complete(_select())
+        # 阻塞，取消 _ws_task 后 asyncio.to_thread 的线程会因 asyncio.CancelledError 退出。
+        # SDK 内部 loop 也会随之关闭。这里仅做防御性清理。
         if self._ws_client:
             try:
-                await self._ws_client.stop()
+                # 尝试调用 disconnect（若 SDK 版本支持）
+                disconnect = getattr(self._ws_client, "_disconnect", None)
+                if disconnect is not None:
+                    # SDK 内部 loop 可能已停止，用 run_coroutine_threadsafe 兜底
+                    try:
+                        asyncio.run_coroutine_threadsafe(disconnect(), self._loop).result(timeout=2.0)
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug("Lark WS client stop: %s", e)
             self._ws_client = None
@@ -386,8 +413,196 @@ class LarkAdapter(ChannelAdapter):
         self._message_dedup.dispose()
 
         self._client = None
+        self._event_dispatcher = None
+        self._loop = None
         self._session_users.clear()
         logger.info("Lark adapter stopped")
+
+    # ==================================================================
+    # EventDispatcherHandler 构建 + sync→async 桥接
+    # ==================================================================
+
+    def _build_event_dispatcher(self) -> EventDispatcherHandler:
+        """
+        构建 lark-oapi EventDispatcherHandler 并注册 P2 事件处理器。
+
+        lark.ws.Client 在收到 WebSocket 帧后会调用
+        event_handler._do_without_validation(payload)，内部按
+        "p2.<event_type>" 键从 _processorMap 查找处理器并同步执行。
+        如果未注册任何处理器，SDK 会抛出 "processor not found" 异常
+        并被静默吞掉 — 这正是消息不响应的根本原因。
+
+        由于 SDK 处理器是同步调用 (processor.do 调用 self.f(data))，
+        我们的 _handle_* 方法是 async，需要通过 _sync_wrap 包装：
+        将 async 函数转为 sync 函数，内部用 run_coroutine_threadsafe
+        或 ensure_future 调度协程到事件循环执行。
+        """
+        builder = EventDispatcherHandler.builder(
+            encrypt_key=self._lark_config.encrypt_key,
+            verification_token=self._lark_config.verification_token,
+            level=lark.LogLevel(self._lark_config.log_level),
+        )
+
+        # ── 核心消息事件（必注册，飞书消息接收的入口）──
+        builder.register_p2_im_message_receive_v1(
+            self._sync_wrap(self._handle_message_receive)
+        )
+
+        # 消息已读事件在某些 SDK 版本中不存在（register_p2_im_message_read_v1）
+        # — 仅记录日志，缺失不影响主流程
+        try:
+            builder.register_p2_im_message_read_v1(
+                self._sync_wrap(self._handle_message_read)
+            )
+        except AttributeError:
+            logger.debug("Lark: register_p2_im_message_read_v1 不可用（SDK 版本差异）")
+
+        # ── Reaction 事件 ──
+        if self._lark_config.reactions_enabled:
+            try:
+                builder.register_p2_im_message_reaction_created_v1(
+                    self._sync_wrap(self._handle_reaction_created)
+                )
+                builder.register_p2_im_message_reaction_deleted_v1(
+                    self._sync_wrap(self._handle_reaction_deleted)
+                )
+            except AttributeError:
+                logger.debug("Lark: reaction processors 不可用（SDK 版本差异）")
+
+        # ── Bot 群聊成员事件 ──
+        try:
+            builder.register_p2_im_chat_member_bot_added_v1(
+                self._sync_wrap(self._handle_bot_added_to_chat)
+            )
+            builder.register_p2_im_chat_member_bot_deleted_v1(
+                self._sync_wrap(self._handle_bot_removed_from_chat)
+            )
+        except AttributeError:
+            logger.debug("Lark: chat member bot processors 不可用（SDK 版本差异）")
+
+        # ── Chat 生命周期事件 ──
+        try:
+            builder.register_p2_im_chat_disbanded_v1(
+                self._sync_wrap(self._handle_chat_disbanded)
+            )
+            builder.register_p2_im_chat_updated_v1(
+                self._sync_wrap(self._handle_chat_updated)
+            )
+        except (AttributeError, Exception):
+            logger.debug("Lark: chat lifecycle processors 注册失败（SDK 版本可能不支持）", exc_info=True)
+
+        # ── VC Meeting + Drive Comment ──
+        # register_p2_vc_bot_meeting_invited_v1 在某些版本中为 register_p2_vc_meeting_*_v1
+        try:
+            builder.register_p2_vc_bot_meeting_invited_v1(
+                self._sync_wrap(self._handle_vc_meeting_invited)
+            )
+        except AttributeError:
+            logger.debug("Lark: VC bot meeting processor 不可用（SDK 版本差异）")
+
+        try:
+            builder.register_p2_drive_notice_comment_add_v1(
+                self._sync_wrap(self._handle_drive_comment_add)
+            )
+        except AttributeError:
+            logger.debug("Lark: Drive comment processor 不可用（SDK 版本差异）")
+
+        # ── Card Action 触发器（card.action.trigger 是 callback 事件）──
+        try:
+            builder.register_p2_card_action_trigger(
+                self._sync_wrap_card_action(self._handle_card_action)
+            )
+        except (AttributeError, Exception):
+            logger.debug("Lark: card action trigger processor 注册失败", exc_info=True)
+
+        return builder.build()
+
+    def _sync_wrap(self, async_handler: Callable) -> Callable:
+        """
+        将 async 事件处理器包装为 sync 函数（SDK P2 处理器要求 sync）。
+
+        lark_oapi 的 P2XxxProcessor.do() 同步调用 self.f(data)；
+        若 f 是 async，返回的 coroutine 不会被 await，事件将丢失。
+        本方法返回一个 sync 包装器，将协程调度到事件循环执行。
+
+        - 若当前线程已有运行中的事件循环（与 SDK 同 loop），用 ensure_future
+        - 否则用 run_coroutine_threadsafe 跨线程调度
+        - 异常被捕获并记录，避免污染 SDK 调用方
+        """
+        def _sync_callback(data: Any) -> None:
+            coro = async_handler(data)
+            if not asyncio.iscoroutine(coro):
+                return
+            loop = self._loop
+            if loop is None:
+                logger.error("Lark: 事件循环未初始化，丢弃事件 %r", type(data).__name__)
+                # 关闭未 await 的协程，避免 RuntimeWarning: coroutine was never awaited
+                coro.close()
+                return
+            try:
+                # 若 SDK 在同一线程的运行中 loop 内调用，ensure_future 即可
+                if loop.is_running() and asyncio.get_event_loop() is loop:
+                    asyncio.ensure_future(coro, loop=loop)
+                else:
+                    # SDK 可能在自己的线程中调用（lark.ws.Client.start 用内部 loop）
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+            except RuntimeError:
+                # 回退：跨线程调度
+                try:
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+                except Exception:
+                    logger.exception("Lark: 调度事件处理器失败")
+                    coro.close()
+            except Exception:
+                logger.exception("Lark: 事件调度异常 (handler=%s)", async_handler.__name__)
+                coro.close()
+        _sync_callback.__name__ = f"_sync_wrap_{getattr(async_handler, '__name__', 'anon')}"
+        return _sync_callback
+
+    def _sync_wrap_card_action(self, async_handler: Callable) -> Callable:
+        """
+        Card Action 触发器返回值需被 SDK 序列化回卡片响应。
+        由于 SDK 同步调用且不能 await 协程，这里同步执行并返回 None
+        （卡片响应通过 _send_card_message 主动推送，不依赖返回值）。
+        """
+        def _sync_callback(data: Any) -> None:
+            coro = async_handler(data)
+            if not asyncio.iscoroutine(coro):
+                return
+            loop = self._loop
+            if loop is None:
+                logger.error("Lark: 事件循环未初始化，丢弃 card action")
+                coro.close()
+                return
+            try:
+                if loop.is_running():
+                    asyncio.ensure_future(coro, loop=loop)
+                else:
+                    asyncio.run_coroutine_threadsafe(coro, loop)
+            except Exception:
+                logger.exception("Lark: card action 调度失败")
+                coro.close()
+        _sync_callback.__name__ = "_sync_wrap_card_action"
+        return _sync_callback
+
+    # ── Chat 生命周期事件（日志记录）──
+    async def _handle_chat_disbanded(self, event: Any) -> None:
+        try:
+            msg_event = getattr(event, "event", None)
+            if msg_event:
+                chat_id = getattr(msg_event, "chat_id", "")
+                logger.info("Lark chat disbanded: chat_id=%s", chat_id)
+        except Exception:
+            logger.exception("Lark _handle_chat_disbanded 异常")
+
+    async def _handle_chat_updated(self, event: Any) -> None:
+        try:
+            msg_event = getattr(event, "event", None)
+            if msg_event:
+                chat_id = getattr(msg_event, "chat_id", "")
+                logger.info("Lark chat updated: chat_id=%s", chat_id)
+        except Exception:
+            logger.exception("Lark _handle_chat_updated 异常")
 
     # ==================================================================
     # ChannelAdapter 接口 — send_response
@@ -505,10 +720,12 @@ class LarkAdapter(ChannelAdapter):
                     if self._lark_config.domain == "feishu"
                     else lark.LARK_DOMAIN
                 )
+                # event_handler 必须是 EventDispatcherHandler 实例（非 async callable）
+                # — 否则 SDK 的 _do_without_validation 会因 processor 未注册而静默丢弃所有事件
                 ws_kwargs: dict[str, Any] = {
                     "app_id": self._lark_config.app_id,
                     "app_secret": self._lark_config.app_secret,
-                    "event_handler": self._dispatch_event,
+                    "event_handler": self._event_dispatcher,
                     "domain": domain,
                     "auto_reconnect": True,
                 }
@@ -523,7 +740,11 @@ class LarkAdapter(ChannelAdapter):
                 except Exception:
                     logger.debug("Lark: Failed to inject WS reconnect overrides", exc_info=True)
                 logger.info("Lark WebSocket connecting...")
-                await self._ws_client.start()
+                # lark.ws.Client.start() 是同步阻塞调用（内部用 loop.run_until_complete）
+                # 不能直接 await — 在独立线程中运行以避免阻塞主事件循环
+                # SDK 内部使用自己的 event loop，sync→async 桥接通过 run_coroutine_threadsafe
+                # 将协程调度到 self._loop（主事件循环）执行
+                await asyncio.to_thread(self._ws_client.start)
             except asyncio.CancelledError:
                 break
             except Exception as e:
