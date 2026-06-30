@@ -515,7 +515,15 @@ class LarkAdapter(ChannelAdapter):
         except (AttributeError, Exception):
             logger.debug("Lark: card action trigger processor 注册失败", exc_info=True)
 
-        return builder.build()
+        dispatcher = builder.build()
+        # 诊断日志：确认 EventDispatcherHandler 已注册处理器
+        _processor_count = len(getattr(dispatcher, "_processorMap", {}))
+        _callback_count = len(getattr(dispatcher, "_callback_processor_map", {}))
+        logger.info(
+            "Lark EventDispatcherHandler built: %d processors, %d callbacks",
+            _processor_count, _callback_count,
+        )
+        return dispatcher
 
     def _sync_wrap(self, async_handler: Callable) -> Callable:
         """
@@ -530,8 +538,14 @@ class LarkAdapter(ChannelAdapter):
         - 异常被捕获并记录，避免污染 SDK 调用方
         """
         def _sync_callback(data: Any) -> None:
+            # 诊断日志：确认 SDK 是否调用了我们的处理器
+            _event_type = getattr(getattr(data, "header", None), "event_type", None) \
+                or getattr(data, "type", None) \
+                or type(data).__name__
+            logger.info("Lark: SDK 调用 _sync_callback, event_type=%s", _event_type)
             coro = async_handler(data)
             if not asyncio.iscoroutine(coro):
+                logger.debug("Lark: handler 未返回协程 (handler=%s)", async_handler.__name__)
                 return
             loop = self._loop
             if loop is None:
@@ -543,13 +557,16 @@ class LarkAdapter(ChannelAdapter):
                 # 若 SDK 在同一线程的运行中 loop 内调用，ensure_future 即可
                 if loop.is_running() and asyncio.get_event_loop() is loop:
                     asyncio.ensure_future(coro, loop=loop)
+                    logger.debug("Lark: 事件已调度 (ensure_future) event_type=%s", _event_type)
                 else:
                     # SDK 可能在自己的线程中调用（lark.ws.Client.start 用内部 loop）
                     asyncio.run_coroutine_threadsafe(coro, loop)
+                    logger.debug("Lark: 事件已调度 (run_coroutine_threadsafe) event_type=%s", _event_type)
             except RuntimeError:
                 # 回退：跨线程调度
                 try:
                     asyncio.run_coroutine_threadsafe(coro, loop)
+                    logger.debug("Lark: 事件已调度 (回退 run_coroutine_threadsafe) event_type=%s", _event_type)
                 except Exception:
                     logger.exception("Lark: 调度事件处理器失败")
                     coro.close()
@@ -886,14 +903,19 @@ class LarkAdapter(ChannelAdapter):
 
     async def _handle_message_receive(self, event: Any) -> None:
         """处理 im.message.receive_v1 事件（含权限门控 + 去重 + 串行队列）"""
+        # 诊断日志：确认事件处理器被调用
+        _msg_id = getattr(getattr(getattr(event, "event", None), "message", None), "message_id", "?")
+        logger.info("Lark message received: msg_id=%s", _msg_id)
         try:
             msg_event = getattr(event, "event", None)
             if msg_event is None:
+                logger.warning("Lark: msg_event is None, 丢弃")
                 return
 
             message = msg_event.message
             sender = msg_event.sender
             if message is None or sender is None:
+                logger.warning("Lark: message/sender is None, 丢弃 (message=%r sender=%r)", message, sender)
                 return
 
             sender_id_obj = sender.sender_id
