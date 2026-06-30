@@ -480,6 +480,16 @@ class LarkAdapter(ChannelAdapter):
         except AttributeError:
             logger.debug("Lark: chat member bot processors 不可用（SDK 版本差异）")
 
+        # ── 用户进入 P2P 会话事件 ──
+        # 飞书在用户打开 bot 私聊窗口时会推送 bot_p2p_chat_entered_v1 事件
+        # 若不注册，SDK 会抛 "processor not found" 错误并刷屏日志
+        try:
+            builder.register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
+                self._sync_wrap(self._handle_p2p_chat_entered)
+            )
+        except AttributeError:
+            logger.debug("Lark: bot_p2p_chat_entered_v1 processor 不可用（SDK 版本差异）")
+
         # ── Chat 生命周期事件 ──
         try:
             builder.register_p2_im_chat_disbanded_v1(
@@ -620,6 +630,20 @@ class LarkAdapter(ChannelAdapter):
                 logger.info("Lark chat updated: chat_id=%s", chat_id)
         except Exception:
             logger.exception("Lark _handle_chat_updated 异常")
+
+    async def _handle_p2p_chat_entered(self, event: Any) -> None:
+        """用户进入 bot P2P 会话事件（打开私聊窗口）— 仅记录日志，不主动发消息"""
+        try:
+            msg_event = getattr(event, "event", None)
+            if msg_event:
+                # event.user.user_id 是用户 open_id
+                user_open_id = ""
+                user_obj = getattr(msg_event, "user", None)
+                if user_obj is not None:
+                    user_open_id = getattr(user_obj, "user_id", "") or getattr(user_obj, "open_id", "")
+                logger.info("Lark P2P chat entered: user=%s", user_open_id or "unknown")
+        except Exception:
+            logger.exception("Lark _handle_p2p_chat_entered 异常")
 
     # ==================================================================
     # ChannelAdapter 接口 — send_response
